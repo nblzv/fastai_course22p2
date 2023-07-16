@@ -3,7 +3,7 @@ import time
 _timing_scopes = []
 
 def get_timestamp():
-    return time.time()
+    return time.perf_counter_ns()
 
 def push_timing_scope():
     _timing_scopes.append(get_timestamp())
@@ -11,14 +11,14 @@ def push_timing_scope():
 def pop_timing_scope():
     return _timing_scopes.pop()
 
-def pop_timing_scope_diff():
-    return get_timestamp() - pop_timing_scope()
+def pop_diff_timing_scope():
+    return (get_timestamp() - pop_timing_scope()) / 1e9
 
-def pop_and_string_timing_scope(prefix="took ", format="0.3f", suffix="s"):
-    return f"{prefix}{pop_timing_scope_diff():{format}}{suffix}"
+def pop_string_timing_scope(prefix="took ", format="0.3f", suffix="s"):
+    return f"{prefix}{pop_diff_timing_scope():{format}}{suffix}"
 
-def pop_and_print_timing_scope(**kwargs):
-    print(pop_and_string_timing_scope(**kwargs))
+def pop_print_timing_scope(**kwargs):
+    print(pop_string_timing_scope(**kwargs))
 
 
 def have_same_conents(fd, contents):
