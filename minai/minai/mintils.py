@@ -21,6 +21,14 @@ def pop_string_timing_scope(prefix="took ", format="0.3f", suffix="s"):
 def pop_print_timing_scope(prefix="took ", format="0.3f", suffix="s"):
     print(pop_string_timing_scope(prefix, format, suffix))
 
+class timing_scope:
+    def __enter__(self):
+        push_timing_scope()
+    
+    def __exit__(self, *args):
+        pop_print_timing_scope()
+
+
 def have_same_conents(fd, contents):
     read = fd.read()
     return read == contents

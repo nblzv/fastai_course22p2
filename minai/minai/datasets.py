@@ -16,9 +16,7 @@ def load_mnist():
     path_data.mkdir(exist_ok=True, parents=True)
     path_zip = path_data / "mnist.zip"
 
-    if path_zip.exists():
-        print(f"Using cached files in {path_zip}")
-    else:
+    if not path_zip.exists(): 
         print(f"Downloading file to {path_zip}")
         urlretrieve(MNIST_URL, path_zip)
 
