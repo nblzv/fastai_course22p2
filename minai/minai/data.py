@@ -108,7 +108,6 @@ class CollatorMT:
 
             yield collated
             self.ctx.request_batch_event.release()
-            
 
 class Dataset:
     def __init__(self, xs, ys):
