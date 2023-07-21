@@ -15,7 +15,6 @@ def chunkify(container, chunk_size):
     
     return chunks
 
-
 class SamplerIter:
     def __init__(self, indices, batch_size, shuffle, drop_last):
         self.indices = indices
@@ -43,5 +42,4 @@ class Sampler:
     def iter(self, batch_size, shuffle=False, drop_last=False):
         indices = list(range(self.num_items))
         return SamplerIter(indices, batch_size, shuffle, drop_last)
-
 

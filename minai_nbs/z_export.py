@@ -39,7 +39,7 @@ def export():
         source_file_relativeto = source_file.relative_to(print_relative_to)
         dest_file_relativeto = dest_file.relative_to(print_relative_to)
 
-        print(f"Processing {source_file_relativeto} -> {dest_file_relativeto}")
+        print(f"Processing {source_file_relativeto} -> {dest_file_relativeto}  |", end="")
 
         if source_filesuffix == ".ipynb":
             parsed = {}
