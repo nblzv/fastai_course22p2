@@ -2,6 +2,7 @@
 
 import itertools
 import random
+
 def chunkify(container, chunk_size):
     num_items = len(container)
     it = iter(container)
@@ -13,6 +14,7 @@ def chunkify(container, chunk_size):
     if leftover: chunks.append(list(it))
     
     return chunks
+
 
 class SamplerIter:
     def __init__(self, indices, batch_size, shuffle, drop_last):
@@ -41,4 +43,5 @@ class Sampler:
     def iter(self, batch_size, shuffle=False, drop_last=False):
         indices = list(range(self.num_items))
         return SamplerIter(indices, batch_size, shuffle, drop_last)
+
 

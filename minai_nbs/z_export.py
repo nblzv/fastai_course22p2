@@ -52,7 +52,7 @@ def export():
                 if cell["cell_type"] == "code":
                     code_lines = cell["source"]
                     if code_lines and code_lines[0].startswith("#e"):
-                        code.append("".join(code_lines[1:]))
+                        code.append("".join(code_lines[1:]) + "\n")
                         exported_count += 1
             code.append("")
             

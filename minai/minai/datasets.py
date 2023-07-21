@@ -9,6 +9,7 @@ import torch
 
 DATASETS_CACHE_BASE_PATH = Path("~/.cache/minai/datasets").expanduser()
 
+
 def load_mnist():
     MNIST_URL = "https://github.com/mnielsen/neural-networks-and-deep-learning/raw/master/data/mnist.pkl.gz"
     
@@ -25,3 +26,4 @@ def load_mnist():
         x_train, y_train, x_val, y_val, x_test, y_test = map(torch.tensor, (x_train, y_train, x_val, y_val, x_test, y_test))
     
     return x_train, y_train, x_val, y_val, x_test, y_test
+
