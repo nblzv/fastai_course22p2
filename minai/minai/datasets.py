@@ -6,9 +6,28 @@ import gzip
 import pickle
 
 import torch
+import datasets as hfds
 
 DATASETS_CACHE_BASE_PATH = Path("~/.cache/minai/datasets").expanduser()
 
+class SimpleDataset:
+    def __init__(self, xs, ys):
+        self.xs = xs
+        self.ys = ys
+        assert len(xs) == len(ys)
+        self.len = len(xs)
+
+    def __len__(self):
+        return self.len
+    
+    def __getitem__(self, i):
+        assert type(i) is int
+        return self.xs[i], self.ys[i]
+    
+    def __repr__(self):
+        return f"SimpleDataset(len={self.len}, "\
+            f"xs={type(self.xs[0]).__qualname__}, "\
+            f"ys={type(self.ys[0]).__qualname__})"
 
 def load_mnist():
     MNIST_URL = "https://github.com/mnielsen/neural-networks-and-deep-learning/raw/master/data/mnist.pkl.gz"
@@ -25,5 +44,18 @@ def load_mnist():
         (x_train, y_train), (x_val, y_val), (x_test, y_test) = pickle.load(f, encoding="latin-1")
         x_train, y_train, x_val, y_val, x_test, y_test = map(torch.tensor, (x_train, y_train, x_val, y_val, x_test, y_test))
     
-    return x_train, y_train, x_val, y_val, x_test, y_test
+    dsd = dict(
+        train=SimpleDataset(x_train, y_train),
+        valid=SimpleDataset(x_val, y_val),
+        test=SimpleDataset(x_test, y_test)
+    )
+    
+    return dsd
+
+class HF_DATASETS:
+    FASHION_MNIST = "fashion_mnist"
+    TINY_IMAGENET = "zh-plus/tiny-imagenet"
+
+def hf_load(name: HF_DATASETS, **kwargs):
+    return hfds.load_dataset(name, **kwargs)
 
