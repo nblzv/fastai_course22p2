@@ -16,7 +16,7 @@ def chunkify(container, chunk_size):
     return chunks
 
 class SIO: # SamplerIterOpts
-    def __init__(self, batch_size=64, shuffle=True, drop_last=False):
+    def __init__(self, batch_size=64, shuffle=False, drop_last=False):
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.drop_last = drop_last

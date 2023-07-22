@@ -6,6 +6,9 @@ import os
 import math
 
 import datasets as hfds
+import torch
+import torchvision.transforms.functional as TF
+import torchvision.io as TFIO
 
 from minai.sampler import chunkify, Sampler, SamplerIter, SIO
 from minai.datasets import SimpleDataset
@@ -34,12 +37,12 @@ class CMTO: # CollatorMTOpts
 
     def __repr__(self):
         return f"CMTO({self.sampler_iter.opts},\n"\
-            f"  getitem_func={self.getitem_func.__qualname__},\n"\
-            f"  collate_func={self.collate_func.__qualname__},\n"\
-            f"  num_workers={self.num_workers},\n"\
-            f"  max_available_batches={self.max_available_batches},\n"\
-            f"  chunk_size_per_thread={self.chunk_size_per_thread},\n"\
-            f"  is_hf_ds={self.is_hf_ds})"
+            f"    getitem_func={self.getitem_func.__qualname__},\n"\
+            f"    collate_func={self.collate_func.__qualname__},\n"\
+            f"    num_workers={self.num_workers},\n"\
+            f"    max_available_batches={self.max_available_batches},\n"\
+            f"    chunk_size_per_thread={self.chunk_size_per_thread},\n"\
+            f"    is_hf_ds={self.is_hf_ds})"
 
 
 class CollatorCTX: # Internal
@@ -119,7 +122,7 @@ def threadproc_collator(ctx: CollatorCTX):
         for _ in range(ctx.max_available_batches-1): ctx.request_batch_event.acquire()
         ctx.collated_batches.put(None)
 
-    #if ctx.DEBUG: print("collator exit")
+    if ctx.DEBUG > 1: print("collator exit")
 
 
 class CollatorMT:
@@ -135,8 +138,9 @@ class CollatorMT:
 
         new_num_workers = min(max(1, math.ceil(batch_size / work_chunk_size)), num_workers)
         if new_num_workers != num_workers:
-            print(f"Number of workers reduced from {num_workers} to {new_num_workers}, since "\
-                  f"num_workers*work_chunk_size > batch_size ({num_workers}*{work_chunk_size} > {batch_size})")
+            if self.DEBUG:
+                print(f"Number of workers reduced from {num_workers} to {new_num_workers}, since "\
+                      f"num_workers*work_chunk_size > batch_size ({num_workers}*{work_chunk_size} > {batch_size})")
             self.opts.num_workers = new_num_workers
 
         self.ctx = CollatorCTX(self.opts, work_chunk_size)
@@ -145,6 +149,8 @@ class CollatorMT:
         for _ in range(self.opts.num_workers): threading.Thread(target=threadproc_worker, args=(self.ctx,)).start()
 
     def __del__(self):
+        if self.DEBUG > 1: print("-> collator del")
+        
         self.ctx.exit_requested = True
         self.ctx.request_batch_event.release()
 
@@ -170,24 +176,19 @@ def simple_collate_func(results):
     ys = [r[1] for r in results]
     return xs, ys
 
-def hf_first_ds(dsd):
-    return next(iter(dsd.values()))
-
 class HFCollate:
     def __init__(self, ds: hfds.Dataset):
-        if type(ds) is hfds.DatasetDict: ds = hf_first_ds(ds)
-        self.features = ds.features.keys()
-        self.features_len = len(self.features)
+        self.features = tuple(ds.features.keys())
 
     def __call__(self, results):
-        collated = [[] for _ in range(self.features_len)]
+        collated = [[] for _ in range(len(self.features))]
         for result in results:
             for i, feature in enumerate(self.features):
                 collated[i].extend(result[feature])
         return collated
     
     def __repr__(self):
-        return f"CollateHF(features={list(self.features)})"
+        return f"HFCollate(features={self.features})"
 
 class DataLoader:
     def __init__(self, dataset, collatormt_opts:CMTO):
@@ -227,7 +228,70 @@ class DataLoader:
 
     def __repr__(self):
         ctmo = self.collator.opts.__repr__()
-        ctmo = ctmo.replace("\n", "\n  ")
+        ctmo = ctmo.replace("\n", "\n    ")
 
-        return f"DataLoader(ds={self.dataset},\n  {ctmo})"
+        return f"DataLoader(ds={self.dataset},\n    {ctmo}\n)"
+
+class DataLoaders:
+    def __init__(self, dataloaders_dict: dict):
+        self.dls = dataloaders_dict
+        
+        for k, v in self.dls.items():
+            super().__setattr__(k, v)
+    
+    def __repr__(self):
+        return f"DataLoaders({', '.join(self.dls)})"
+
+    @classmethod
+    def hf(cls, dsd: hfds.DatasetDict, 
+           sampler_iter_opts: SIO = None, 
+           collatormt_opts: CMTO = None):
+        dls = {}
+        for k in dsd:
+            dls[k] = DataLoader.hf(dsd[k], sampler_iter_opts, collatormt_opts)
+        return cls(dls)
+
+class HFTransform:
+    def __init__(self, features, transform, **extra_args):
+        self.features = tuple(features)
+        self.transform = transform
+
+        for k, v in extra_args.items():
+            super().__setattr__(k ,v)
+
+    def __call__(self, results):
+        return self.transform(self, results)
+    
+    def __repr__(self):
+        return f"HFTransform(features={list(self.features)})"
+
+    @classmethod
+    def ff_img_to_tensor(cls, features): # first_feature
+        def tf(ctx: HFTransform, results):
+            xs = results[ctx.features[0]]
+            for i in range(len(xs)):
+                xs[i] = TF.to_tensor(xs[i])
+            return results
+        
+        return cls(features, tf)
+    
+    @classmethod
+    def ff_img_decode_to_tensor(cls, features, half=False): # first_feature
+        def tf(ctx: HFTransform, results):
+            xs = results[ctx.features[0]]
+            for i in range(len(xs)):
+                raw = torch.frombuffer(xs[i]["bytes"], dtype=torch.uint8)
+                decoded = TFIO.decode_image(raw)
+                if ctx.half: decoded = decode.half()
+                else: decoded = decoded.float()
+                xs[i] = decoded / 255.0
+            return results
+        
+        return cls(features, tf, half=half)
+
+def first(iterable):
+    return next(iter(iterable))
+
+def first_value(iterable):
+    return next(iter(iterable.values()))
 
