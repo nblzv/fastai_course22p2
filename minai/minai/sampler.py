@@ -3,13 +3,16 @@
 import itertools
 import random
 
-def chunkify(container, chunk_size):
+def chunkify_calc_sizes(container, chunk_size):
     num_items = len(container)
-    it = iter(container)
-
     full_chunks = num_items // chunk_size
     leftover = num_items - full_chunks*chunk_size
+    return full_chunks, leftover
 
+def chunkify(container, chunk_size):
+    full_chunks, leftover = chunkify_calc_sizes(container, chunk_size)
+
+    it = iter(container)
     chunks = [list(itertools.islice(it, chunk_size)) for _ in range(full_chunks)]
     if leftover: chunks.append(list(it))
     
@@ -28,6 +31,9 @@ class SamplerIter:
     def __init__(self, indices, sampler_iter_opts: SIO):
         self.indices = indices
         self.opts = sampler_iter_opts
+
+        full_chunks, leftover = chunkify_calc_sizes(self.indices, self.opts.batch_size)
+        self.num_batches = full_chunks + (not self.opts.drop_last)*bool(leftover)
 
     def __iter__(self):
         if self.opts.shuffle: random.shuffle(self.indices)

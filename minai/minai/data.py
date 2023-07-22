@@ -60,9 +60,10 @@ class CollatorCTX: # Internal
         self.indices_queue = queue.SimpleQueue()
         self.results_queue = queue.SimpleQueue()
         
-        self.request_batch_event = threading.BoundedSemaphore(self.max_available_batches)
+        self.request_batch_event = threading.Semaphore(self.max_available_batches)
         self.collated_batches = queue.SimpleQueue()
         self.exit_requested = False
+        self.new_iter_requested = False
 
         for _ in range(self.max_available_batches): self.request_batch_event.acquire()
 
@@ -82,11 +83,17 @@ def threadproc_worker(ctx: CollatorCTX):
         del results
 
 def threadproc_collator(ctx: CollatorCTX):
+    last_iter_finished = True
+
     while 1:
         if ctx.DEBUG: print("batches top")
         
-        ctx.request_batch_event.acquire()
+        if last_iter_finished: 
+            ctx.request_batch_event.acquire()
+
         if ctx.exit_requested: break
+        ctx.new_iter_requested = False
+        last_iter_finished = True
         
         if ctx.DEBUG: print("batches start")
         for batch in ctx.sampler_iter:
@@ -115,12 +122,21 @@ def threadproc_collator(ctx: CollatorCTX):
 
             ctx.collated_batches.put(ctx.collate_func(sorted_work_chunks_results))
             ctx.request_batch_event.acquire()
-            if ctx.exit_requested: break # Double break
+            
+            if ctx.exit_requested: last_iter_finished = False; break # Double break
+            if ctx.new_iter_requested: last_iter_finished = False; break
 
         if ctx.exit_requested: break # Double break
-        if ctx.DEBUG: print("batches done")
-        for _ in range(ctx.max_available_batches-1): ctx.request_batch_event.acquire()
+        
         ctx.collated_batches.put(None)
+        if last_iter_finished:
+            for _ in range(ctx.max_available_batches-1): ctx.request_batch_event.acquire()
+
+        if ctx.new_iter_requested:
+            ctx.new_iter_requested = False
+            if ctx.DEBUG: print("batches restart")
+        else:
+            if ctx.DEBUG: print("batches done")
 
     if ctx.DEBUG > 1: print("collator exit")
 
@@ -143,10 +159,17 @@ class CollatorMT:
                       f"num_workers*work_chunk_size > batch_size ({num_workers}*{work_chunk_size} > {batch_size})")
             self.opts.num_workers = new_num_workers
 
-        self.ctx = CollatorCTX(self.opts, work_chunk_size)
+        max_available_batches = self.opts.max_available_batches
+        num_batches = self.opts.sampler_iter.num_batches
+        new_max_available_batches = min(max_available_batches, num_batches)
+        if new_max_available_batches != max_available_batches:
+            if self.DEBUG:
+                print(f"Max available batches reduced from {max_available_batches} to {new_max_available_batches}")
+            self.opts.max_available_batches = new_max_available_batches
 
-        threading.Thread(target=threadproc_collator, args=(self.ctx,)).start()
-        for _ in range(self.opts.num_workers): threading.Thread(target=threadproc_worker, args=(self.ctx,)).start()
+        self.ctx = CollatorCTX(self.opts, work_chunk_size)
+        self.last_iter_finished = True
+        self.threads_spawned = False
 
     def __del__(self):
         if self.DEBUG > 1: print("-> collator del")
@@ -157,18 +180,30 @@ class CollatorMT:
         for _ in range(self.opts.num_workers): self.ctx.indices_queue.put(None)
 
     def __iter__(self):
+        self.ctx.new_iter_requested = True
         self.ctx.request_batch_event.release(self.ctx.max_available_batches)
         
+        if not self.last_iter_finished:
+            while self.ctx.collated_batches.get() is not None: 
+                pass # Consume the remaining cached batches before restarting
+        self.last_iter_finished = False
+        
+        if not self.threads_spawned:
+            threading.Thread(target=threadproc_collator, args=(self.ctx,)).start()
+            for _ in range(self.opts.num_workers): threading.Thread(target=threadproc_worker, args=(self.ctx,)).start()
+            self.threads_spawned = True
+
         while 1:
             if self.DEBUG: print("-> iter request")
             collated = self.ctx.collated_batches.get()
             if collated is None: 
+                self.last_iter_finished = True
                 if self.DEBUG: print("-> iter done")
                 break
 
             if self.DEBUG: print("-> iter got")
-
             yield collated
+
             self.ctx.request_batch_event.release()
 
 def simple_collate_func(results):
@@ -192,13 +227,11 @@ class HFCollate:
 
 class DataLoader:
     def __init__(self, dataset, collatormt_opts:CMTO):
-        self.dataset = dataset
+        self.ds = dataset
         self.collator = CollatorMT(collatormt_opts)
 
     @classmethod
-    def simple(cls, simple_ds: SimpleDataset, 
-               sampler_iter_opts: SIO = None, 
-               collatormt_opts: CMTO = None):
+    def simple(cls, simple_ds: SimpleDataset, sampler_iter_opts: SIO = None, collatormt_opts: CMTO = None):
         sampler_iter_opts = sampler_iter_opts or SIO()
         collatormt_opts = collatormt_opts or CMTO()
 
@@ -209,10 +242,8 @@ class DataLoader:
         return cls(simple_ds, opts)
 
     @classmethod
-    def hf(cls, hf_ds: hfds.Dataset,
-           sampler_iter_opts: SIO = None, 
-           collatormt_opts: CMTO = None):
-        assert type(hf_ds) is hfds.Dataset, "Dataset expected (not DatasetDict)"
+    def hf(cls, hf_ds: hfds.Dataset, sampler_iter_opts: SIO = None, collatormt_opts: CMTO = None):
+        assert type(hf_ds) is hfds.Dataset, f"Dataset expected, not {type(hf_ds).__name__}"
         sampler_iter_opts = sampler_iter_opts or SIO()
         collatormt_opts = collatormt_opts or CMTO()
 
@@ -230,29 +261,11 @@ class DataLoader:
         ctmo = self.collator.opts.__repr__()
         ctmo = ctmo.replace("\n", "\n    ")
 
-        return f"DataLoader(ds={self.dataset},\n    {ctmo}\n)"
-
-class DataLoaders:
-    def __init__(self, dataloaders_dict: dict):
-        self.dls = dataloaders_dict
-        
-        for k, v in self.dls.items():
-            super().__setattr__(k, v)
-    
-    def __repr__(self):
-        return f"DataLoaders({', '.join(self.dls)})"
-
-    @classmethod
-    def hf(cls, dsd: hfds.DatasetDict, 
-           sampler_iter_opts: SIO = None, 
-           collatormt_opts: CMTO = None):
-        dls = {}
-        for k in dsd:
-            dls[k] = DataLoader.hf(dsd[k], sampler_iter_opts, collatormt_opts)
-        return cls(dls)
+        return f"DataLoader(ds={self.ds},\n    {ctmo}\n)"
 
 class HFTransform:
     def __init__(self, features, transform, **extra_args):
+        assert type(features) is hfds.features.features.Features
         self.features = tuple(features)
         self.transform = transform
 
@@ -294,4 +307,21 @@ def first(iterable):
 
 def first_value(iterable):
     return next(iter(iterable.values()))
+
+class DataLoaderDict(dict):
+    def __init__(self, dataloaders_dict: dict):
+        super().__init__(dataloaders_dict)
+
+    def __getitem__(self, key) -> DataLoader:
+        return super().__getitem__(key)
+        
+    def __repr__(self):
+        return f"DataLoaders({super().__repr__()})"
+
+    @classmethod
+    def hf(cls, dsd: hfds.DatasetDict, sampler_iter_opts: SIO = None, collatormt_opts: CMTO = None):
+        dls = {}
+        for k in dsd:
+            dls[k] = DataLoader.hf(dsd[k], sampler_iter_opts, collatormt_opts)
+        return cls(dls)
 

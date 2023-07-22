@@ -56,6 +56,5 @@ class HF_DATASETS:
     FASHION_MNIST = "fashion_mnist"
     TINY_IMAGENET = "zh-plus/tiny-imagenet"
 
-def hf_load(name: HF_DATASETS, **kwargs):
-    return hfds.load_dataset(name, **kwargs)
+hf_load = hfds.load_dataset
 
