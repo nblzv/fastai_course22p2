@@ -20,9 +20,8 @@ class SimpleDataset:
     def __len__(self):
         return self.len
     
-    def __getitem__(self, i):
-        assert type(i) is int
-        return self.xs[i], self.ys[i]
+    def __getitem__(self, ixs):
+        return [[self.xs[i], self.ys[i]] for i in ixs]
     
     def __repr__(self):
         return f"SimpleDataset(len={self.len}, "\
