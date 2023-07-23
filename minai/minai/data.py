@@ -117,8 +117,6 @@ class Collator:
             for i in range(self.opts.num_threads): threading.Thread(target=collator_threadproc, args=(i+1, self)).start()
             self.threads_spawned = True
 
-        self.global_lock.acquire()
-        
         iter_serials_to_del = []
         for iter_serial, cached_iter in self.cached_iters.items():
             if cached_iter.num_groups_requested == cached_iter.num_groups_finished:
@@ -132,7 +130,6 @@ class Collator:
 
         cached_iter = self.CachedIter(new_iter_serial, iter(self.opts.sampler_iter), self.opts.sampler_iter.num_batches)
         self.cached_iters[new_iter_serial] = cached_iter
-        self.global_lock.release()
 
         self.load_batches(cached_iter, self.opts.cached_batch_count + 1)
 
@@ -180,9 +177,7 @@ class CollatedResult:
 
 def collator_threadproc(thread_id: int, ctx: Collator):
     work_queue = ctx.work_queue
-    global_lock = ctx.global_lock
     sub_batch_size = ctx.opts.sub_batch_size
-    cached_iters = ctx.cached_iters
     getitem_func = ctx.opts.getitem_func
     collate_func = ctx.opts.collate_func
     debug_out_queue = ctx.opts.debug_out_queue
