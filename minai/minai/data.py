@@ -130,9 +130,9 @@ class Collator:
         if self.opts.debug_out_queue: self.opts.debug_out_queue.put(f"[0] New iter {new_iter_serial}")
 
         self.cached_iters[new_iter_serial] = self.CachedIter(iter(self.opts.sampler_iter), self.opts.sampler_iter.num_batches)
-        self.load_batches(new_iter_serial, self.opts.cached_batch_count + 1)
-
         self.global_lock.release()
+
+        self.load_batches(new_iter_serial, self.opts.cached_batch_count + 1)
 
         return new_iter_serial, self.cached_iters[new_iter_serial]
     
@@ -254,8 +254,8 @@ def collator_threadproc(thread_id: int, ctx: Collator):
                     if debug_out_queue: debug_out_queue.put(f"[{thread_id}] Completed iter {group_iter_serial}")
                     cached_iter.collated_queue.put(CollatedResult(group_iter_serial, 0, None))
 
-                    if thread_id == 0:
-                        break
+                if thread_id == 0:
+                    break
                 
 
         elif work_type == WORK_TYPE_SHUTDOWN:
