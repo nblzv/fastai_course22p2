@@ -45,9 +45,9 @@ class WorkItem:
     def __repr__(self): return f"{self.__class__.__name__}({str(vars(self))})"
 
 class WorkItemLoadBatches(WorkItem):
-    def __init__(self, iter_serial, num_batches):
+    def __init__(self, cached_iter: "Collator.CachedIter", num_batches):
         super().__init__(WORK_TYPE_LOAD_BATCHES)
-        self.iter_serial = iter_serial
+        self.cached_iter = cached_iter
         self.num_batches = num_batches
 
 class WorkItemGetItems(WorkItem):
@@ -91,7 +91,8 @@ class COPTS: # CollatorOpts
 
 class Collator:
     class CachedIter:
-        def __init__(self, iter, num_groups_total):
+        def __init__(self, serial, iter, num_groups_total):
+            self.serial = serial
             self.iter = iter
             self.num_groups_total = num_groups_total
             self.num_groups_requested = 0
@@ -129,22 +130,22 @@ class Collator:
         new_iter_serial = self.current_iter_serial
         if self.opts.debug_out_queue: self.opts.debug_out_queue.put(f"[0] New iter {new_iter_serial}")
 
-        self.cached_iters[new_iter_serial] = self.CachedIter(iter(self.opts.sampler_iter), self.opts.sampler_iter.num_batches)
+        cached_iter = self.CachedIter(new_iter_serial, iter(self.opts.sampler_iter), self.opts.sampler_iter.num_batches)
+        self.cached_iters[new_iter_serial] = cached_iter
         self.global_lock.release()
 
-        self.load_batches(new_iter_serial, self.opts.cached_batch_count + 1)
+        self.load_batches(cached_iter, self.opts.cached_batch_count + 1)
 
-        return new_iter_serial, self.cached_iters[new_iter_serial]
+        return cached_iter
     
-    def load_batches(self, iter_serial, num_batches):
+    def load_batches(self, cached_iter: CachedIter, num_batches):
         queued_any = False
 
-        cached_iter = self.cached_iters[iter_serial]
         cached_iter.lock.acquire()
         new_num_groups_requested = min(cached_iter.num_groups_requested + num_batches, cached_iter.num_groups_total)
         if new_num_groups_requested != cached_iter.num_groups_requested:
             to_request = new_num_groups_requested-cached_iter.num_groups_requested
-            self.work_queue.put(WorkItemLoadBatches(iter_serial, to_request))
+            self.work_queue.put(WorkItemLoadBatches(cached_iter, to_request))
             cached_iter.num_groups_requested = new_num_groups_requested
             if self.opts.debug_out_queue: self.opts.debug_out_queue.put(f"[0] Requesting {to_request} batches for iter {iter_serial}")
             queued_any = True
@@ -158,8 +159,8 @@ class Collator:
             for _ in range(self.opts.num_threads): self.work_queue.put(WorkItem(WORK_TYPE_SHUTDOWN))
 
 class WorkGroup:
-    def __init__(self, iter_serial, batch_serial, num_total):
-        self.iter_serial = iter_serial
+    def __init__(self, cached_iter: "Collator.CachedIter", batch_serial, num_total):
+        self.cached_iter = cached_iter
         self.batch_serial = batch_serial
         self.num_total = num_total
         self.gi_work_array: list[WorkItemGetItems] = []
@@ -171,8 +172,7 @@ class WorkGroup:
                                     f"num_done={self.num_done}, num_total={self.num_total})"
 
 class CollatedResult:
-    def __init__(self, iter_serial, batch_serial, result):
-        self.iter_serial = iter_serial # Don't really need to store the iter_serial in results anymore since every CachedIter has it's own queue now
+    def __init__(self, batch_serial, result):
         self.batch_serial = batch_serial
         self.result = result
 
@@ -197,9 +197,7 @@ def collator_threadproc(thread_id: int, ctx: Collator):
         if work_type == WORK_TYPE_LOAD_BATCHES:
             lb_work: WorkItemLoadBatches = work
             
-            global_lock.acquire()
-            cached_iter = cached_iters[lb_work.iter_serial]
-            global_lock.release()
+            cached_iter = lb_work.cached_iter
             
             cached_iter.lock.acquire()
             read_num_groups = cached_iter.num_groups_started
@@ -214,7 +212,7 @@ def collator_threadproc(thread_id: int, ctx: Collator):
                 assert len(sub_batches)
 
                 batch_serial = read_num_groups + batches_spawned
-                work_group = WorkGroup(lb_work.iter_serial, batch_serial + 1, len(sub_batches))
+                work_group = WorkGroup(lb_work.cached_iter, batch_serial + 1, len(sub_batches))
                 for sub_batch in sub_batches:
                     work_queue.put(WorkItemGetItems(work_group, sub_batch))
                     if debug_out_queue: debug_out_queue.put(f"[{thread_id}] Queued {work_group.gi_work_array[-1]}")
@@ -225,7 +223,6 @@ def collator_threadproc(thread_id: int, ctx: Collator):
         elif work_type == WORK_TYPE_GET_ITEMS:
             gi_work: WorkItemGetItems = work
             work_group = gi_work.group
-            group_iter_serial = work_group.iter_serial
 
             gi_work.results = getitem_func(gi_work.indices)
 
@@ -238,9 +235,7 @@ def collator_threadproc(thread_id: int, ctx: Collator):
                 assert work_group.num_done == len(work_group.gi_work_array)
                 if debug_out_queue: debug_out_queue.put(f"[{thread_id}] Completed group {work_group}")
 
-                global_lock.acquire()
-                cached_iter = cached_iters[group_iter_serial]
-                global_lock.release()
+                cached_iter = work_group.cached_iter
                 
                 cached_iter.lock.acquire()
                 cached_iter.num_groups_finished += 1
@@ -248,11 +243,11 @@ def collator_threadproc(thread_id: int, ctx: Collator):
                 cached_iter.lock.release()
 
                 collated = collate_func([gi_work.results for gi_work in work_group.gi_work_array])
-                cached_iter.collated_queue.put(CollatedResult(group_iter_serial, work_group.batch_serial, collated))
+                cached_iter.collated_queue.put(CollatedResult(work_group.batch_serial, collated))
 
                 if is_last_group:
-                    if debug_out_queue: debug_out_queue.put(f"[{thread_id}] Completed iter {group_iter_serial}")
-                    cached_iter.collated_queue.put(CollatedResult(group_iter_serial, 0, None))
+                    if debug_out_queue: debug_out_queue.put(f"[{thread_id}] Completed iter {cached_iter.serial}")
+                    cached_iter.collated_queue.put(CollatedResult(0, None))
 
                 if thread_id == 0:
                     break
@@ -267,9 +262,9 @@ def collator_threadproc(thread_id: int, ctx: Collator):
 
 
 class DataLoaderIter:
-    def __init__(self, collator, iter_serial, collated_queue):
+    def __init__(self, collator, cached_iter: Collator.CachedIter, collated_queue):
         self.collator = collator
-        self.iter_serial = iter_serial
+        self.cached_iter = cached_iter
         self.collated_queue = collated_queue
         
         self.buffer: list[CollatedResult] = []
@@ -278,9 +273,8 @@ class DataLoaderIter:
     def __iter__(self):
         while 1:
             collated: CollatedResult = self.collated_queue.get()
-            assert collated.iter_serial == self.iter_serial
-
             if not collated.batch_serial:
+                assert not self.buffer # batch_serial == 0 should strictly come last
                 break
 
             self.buffer.append(collated)
@@ -293,7 +287,7 @@ class DataLoaderIter:
                 self.next_batch_index += 1
                 
                 yield to_yield
-                self.collator.load_batches(self.iter_serial, 1)
+                self.collator.load_batches(self.cached_iter, 1)
 
 class DataLoader:
     def __init__(self, ds, copts: COPTS):
@@ -304,8 +298,8 @@ class DataLoader:
         self.collator.shutdown()
     
     def __iter__(self):
-        current_iter, cached_iter = self.collator.start_new_iter()
-        return iter(DataLoaderIter(self.collator, current_iter, cached_iter.collated_queue))
+        cached_iter = self.collator.start_new_iter()
+        return iter(DataLoaderIter(self.collator, cached_iter, cached_iter.collated_queue))
     
     @classmethod
     def simple(cls, simple_ds: minds.SimpleDataset, sampler_iter_opts: mins.SIO = None, collator_opts: COPTS = None):
