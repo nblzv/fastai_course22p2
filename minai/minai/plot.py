@@ -30,6 +30,7 @@ def show_img(img, opts: PlotOpts = None):
     opts = opts or PlotOpts()
     
     assert type(img) is torch.Tensor
+    if img.device != "cpu": img = img.detach().to("cpu")
     img = img.permute(1, 2, 0)
 
     ax = opts.ax
@@ -37,6 +38,8 @@ def show_img(img, opts: PlotOpts = None):
         fig, ax = plt.subplots(1, 1, figsize=opts.figsize)
         fig.patch.set_visible(False)
         ax.axis("off")
+
+    if type(opts.title) is torch.Tensor: opts.title = str(opts.title.item())
 
     ax.imshow(img, cmap=opts.cmap)
     ax.set_title(opts.title, fontsize=opts.fontsize)

@@ -13,10 +13,10 @@ def pop_timing_scope():
 def pop_diff_timing_scope():
     return (get_timestamp() - pop_timing_scope()) / 1e9
 
-def pop_string_timing_scope(prefix="took ", format="0.3f", suffix="s"):
-    return f"{prefix}{pop_diff_timing_scope():{format}}{suffix}"
+def pop_string_timing_scope(prefix="took", format="0.3f", suffix="s"):
+    return f"{prefix} {pop_diff_timing_scope():{format}}{suffix}"
 
-def pop_print_timing_scope(prefix="took ", format="0.3f", suffix="s"):
+def pop_print_timing_scope(prefix="took", format="0.3f", suffix="s"):
     print(pop_string_timing_scope(prefix, format, suffix))
 
 class timing_scope:
