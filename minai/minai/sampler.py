@@ -10,6 +10,8 @@ def chunkify_calc_sizes(container, chunk_size):
     return full_chunks, leftover
 
 def chunkify(container, chunk_size):
+    #if len(container) <= chunk_size: return [container]
+    
     full_chunks, leftover = chunkify_calc_sizes(container, chunk_size)
 
     it = iter(container)
