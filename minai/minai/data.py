@@ -45,9 +45,7 @@ class WorkItem:
     def __init__(self, type):
         self.type = type
 
-    def __del__(self):
-        # print("work item dead", self.type, threading.get_native_id())
-        pass
+    #def __del__(self): print("work item dead", self.type, threading.get_native_id())
 
     def __repr__(self): return f"{self.__class__.__name__}({str(vars(self))})"
 
@@ -57,9 +55,7 @@ class WorkItemLoadBatches(WorkItem):
         self.cached_iter = cached_iter
         self.num_batches = num_batches
 
-    def __del__(self):
-        # print("work item loadbatches dead", threading.get_native_id())
-        pass
+    #def __del__(self): print("work item loadbatches dead", threading.get_native_id())
 
 class WorkItemGetItems(WorkItem):
     def __init__(self, group: "WorkGroup", indices):
@@ -70,9 +66,7 @@ class WorkItemGetItems(WorkItem):
 
         self.group.gi_work_array.append(self)
 
-    def __del__(self):
-        # print("work item getitems dead", threading.get_native_id())
-        pass
+    #def __del__(self): print("work item getitems dead", threading.get_native_id())
 
 class COPTS: # CollatorOpts
     def __init__(self,
@@ -87,17 +81,27 @@ class COPTS: # CollatorOpts
         self.sampler_iter = sampler_iter
         self.getitem_func = getitem_func
         self.collate_func = collate_func
-        self.num_threads = num_threads if num_threads is not None else max(1, os.cpu_count()-1)
+        self.num_threads = num_threads
         self.sub_batch_size = sub_batch_size
         self.cached_batch_count = cached_batch_count
         self.debug_out_queue = debug_out_queue
+    
+    def __repr__(self): return str(vars(self))
 
     def finalize(self):
-        if not self.num_threads:
+        cpu_count = os.cpu_count()
+        if self.num_threads is None:
+            self.num_threads = max(1, cpu_count//2)
+        elif self.num_threads == 0:
             self.cached_batch_count = 0
             self.sub_batch_divisor = 1.0
-        
-        self.sub_batch_size = clamp(1, self.sub_batch_size or self.sampler_iter.opts.batch_size, self.sampler_iter.opts.batch_size)
+        self.num_threads = clamp(0, self.num_threads, cpu_count*10)
+
+        if self.sub_batch_size is None:
+            self.sub_batch_size = math.ceil(self.sampler_iter.opts.batch_size / self.num_threads)
+        elif self.sub_batch_size == 0:
+            self.sub_batch_size = self.sampler_iter.opts.batch_size
+        self.sub_batch_size = clamp(1, self.sub_batch_size, self.sampler_iter.opts.batch_size)
 
         return self
 
@@ -113,9 +117,7 @@ class Collator:
             self.lock = threading.Lock()
             self.collated_queue = queue.SimpleQueue() # Not the greatest to have a queue per CachedIter, but it simplifies the DataLoader
 
-        def __del__(self):
-            # print("cached iter dead", threading.get_native_id())
-            pass
+        #def __del__(self): print("cached iter dead", threading.get_native_id())
 
         def __repr__(self):
             return f"CachedIter(serial={self.serial}, total={self.num_groups_total}, requested={self.num_groups_requested}, started={self.num_groups_started}, finished={self.num_groups_finished})"
@@ -128,9 +130,9 @@ class Collator:
         self.current_iter_serial = 0
         self.shutdown_counter = None
 
-    def __del__(self):
-        # print("collator dead", threading.get_native_id())
-        pass
+    #def __del__(self): print("collator dead", threading.get_native_id())
+
+    def __repr__(self): return str(vars(self))
 
     def start_new_iter(self):
         if not self.threads_spawned: 
@@ -150,20 +152,19 @@ class Collator:
         return cached_iter
     
     def load_batches(self, cached_iter: CachedIter, num_batches):
-        queued_any = False
-
+        if not num_batches: return
+        
         cached_iter.lock.acquire()
-        new_num_groups_requested = min(cached_iter.num_groups_requested + num_batches, cached_iter.num_groups_total)
-        if new_num_groups_requested != cached_iter.num_groups_requested:
-            to_request = new_num_groups_requested-cached_iter.num_groups_requested
-            self.work_queue.put(WorkItemLoadBatches(cached_iter, to_request))
-            cached_iter.num_groups_requested = new_num_groups_requested
-            if self.opts.debug_out_queue: self.opts.debug_out_queue.put(f"[0] Requesting {to_request} batches for iter {iter_serial}")
-            queued_any = True
+        to_request = min(num_batches, cached_iter.num_groups_total - cached_iter.num_groups_requested)
+        cached_iter.num_groups_requested += to_request
         cached_iter.lock.release()
 
-        if self.opts.num_threads == 0 and queued_any:
-            collator_threadproc(0, self)
+        if to_request:
+            self.work_queue.put(WorkItemLoadBatches(cached_iter, to_request))
+            if self.opts.debug_out_queue: self.opts.debug_out_queue.put(f"[0] Requesting {to_request} batches for iter {cached_iter.serial}")
+
+            if self.opts.num_threads == 0:
+                collator_threadproc(0, self)
 
     def shutdown(self):
         if self.threads_spawned:
@@ -176,9 +177,7 @@ class Collator:
                     got = work_queue.get()
                     if type(got) is WorkItemGetItems:
                         gi_work: WorkItemGetItems = got
-                        if gi_work.group:
-                            assert False # Just want to see if this ever gets hit, theoretically it should
-                            gi_work.group.complete()
+                        if gi_work.group: gi_work.group.complete()
             
             threading.Thread(target=wait_for_threads_to_shutdown_and_empty_work_queue, 
                              args=(self.opts.num_threads, self.shutdown_counter, self.work_queue), daemon=True).start()
@@ -194,9 +193,7 @@ class WorkGroup:
         self.num_done_lock = threading.Lock()
         self.num_done = 0
 
-    def __del__(self):
-        # print("work group dead", threading.get_native_id())
-        pass
+    #def __del__(self): print("work group dead", threading.get_native_id())
 
     def __repr__(self): return f"{self.__class__.__name__}(iter_serial={self.cached_iter.serial}, batch_serial={self.batch_serial}, "\
                                     f"num_done={self.num_done}, num_total={self.num_total})"
@@ -211,6 +208,8 @@ class CollatedResult:
     def __init__(self, batch_serial, result):
         self.batch_serial = batch_serial
         self.result = result
+
+    #def __del__(self): print("collatedresult dead")
 
     def __repr__(self): return f"{self.__class__.__name__}({str(vars(self))})"
 
@@ -271,11 +270,11 @@ def collator_process_one_work(thread_id, work_queue, sub_batch_size, getitem_fun
             collated = collate_func([gi_work.results for gi_work in work_group.gi_work_array])
             cached_iter.collated_queue.put(CollatedResult(work_group.batch_serial, collated))
 
-            work_group.complete()
-
             if is_last_group:
                 if debug_out_queue: debug_out_queue.put(f"[{thread_id}] Completed iter {cached_iter.serial}")
                 cached_iter.collated_queue.put(CollatedResult(0, None))
+
+            work_group.complete()
 
             if thread_id == 0:
                 return True
@@ -315,15 +314,17 @@ class DataLoaderIter:
         self.buffer: list[CollatedResult] = []
         self.next_batch_index = 1
 
-    def __del__(self):
-        # print("dliter dead", threading.get_native_id())
-        pass
+        # Request the first batch right away, since we will presumably call next right after this
+        self.collator.load_batches(self.cached_iter, 1)
+
+    #def __del__(self): print("dliter dead", threading.get_native_id())
     
     def __repr__(self):
         return f"DataLoaderIter({self.cached_iter})"
 
     def __iter__(self):
-        self.collator.load_batches(self.cached_iter, self.collator.opts.cached_batch_count + 1)
+        # Kick off the rest of the requested specified batches
+        self.collator.load_batches(self.cached_iter, self.collator.opts.cached_batch_count)
 
         while 1:
             collated: CollatedResult = self.cached_iter.collated_queue.get()
@@ -333,8 +334,11 @@ class DataLoaderIter:
 
             self.buffer.append(collated)
 
-            found_i = next((i for i, x in enumerate(self.buffer) if x.batch_serial == self.next_batch_index), -1)
-            if found_i != -1:
+            while 1:
+                found_i = next((i for i, x in enumerate(self.buffer) if x.batch_serial == self.next_batch_index), -1)
+                if found_i == -1:
+                    break
+
                 to_yield = self.buffer[found_i].result
                 self.buffer[found_i] = self.buffer[-1]
                 self.buffer.pop()
@@ -352,6 +356,8 @@ class DataLoader:
         self.collator.shutdown()
         # print("dl dead", threading.get_native_id())
     
+    def __repr__(self): return str(vars(self))
+
     def __iter__(self):
         cached_iter = self.collator.start_new_iter()
         return iter(DataLoaderIter(self.collator, cached_iter))
@@ -430,7 +436,7 @@ class DataLoaderDict(dict):
         return super().__getitem__(key)
         
     def __repr__(self):
-        return f"DataLoaders({super().__repr__()})"
+        return f"DataLoaders({list(self.keys())})"
 
     @classmethod
     def hf(cls, dsd: hfds.DatasetDict, sampler_iter_opts: mins.SIO = None, collator_opts: COPTS = None):
