@@ -1,4 +1,5 @@
 import time
+import os
 
 _timing_scopes = []
 def get_timestamp():
@@ -35,3 +36,10 @@ def overwrite_file(fd, contents):
     fd.seek(0, 0)
     fd.write(contents)
     fd.truncate()
+
+def np_limit_threads():
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+    os.environ["NUMEXPR_NUM_THREADS"] = "1"
