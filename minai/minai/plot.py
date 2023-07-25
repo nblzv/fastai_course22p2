@@ -10,7 +10,7 @@ import torch
 def default_cmap(param): plt.rcParams.update({"image.cmap": param})
 def default_title_color(param): plt.rcParams.update({"text.color": param})
 
-class PlotOpts:
+class POPTS: # PlotOpts
     def __init__(self, figsize=None, cmap=None, ax=None, title=None,
                  titles=None, rows=None, cols=None, fontsize=None,
                  supfontsize=None, wspace=None, hspace=None):
@@ -26,8 +26,8 @@ class PlotOpts:
         self.wspace = wspace
         self.hspace = hspace
 
-def show_img(img, opts: PlotOpts = None):
-    opts = opts or PlotOpts()
+def show_img(img, opts: POPTS = None):
+    opts = opts or POPTS()
     
     assert type(img) is torch.Tensor
     if img.device != "cpu": img = img.detach().to("cpu")
@@ -44,7 +44,7 @@ def show_img(img, opts: PlotOpts = None):
     ax.imshow(img, cmap=opts.cmap)
     ax.set_title(opts.title, fontsize=opts.fontsize)
 
-def show_batch(imgs, opts: PlotOpts):
+def show_batch(imgs, opts: POPTS):
     fig, axs = plt.subplots(opts.rows, opts.cols, figsize=opts.figsize, 
                             layout="constrained", 
                             gridspec_kw={"wspace": opts.wspace, 
@@ -58,6 +58,10 @@ def show_batch(imgs, opts: PlotOpts):
     if opts.titles:
         if type(opts.titles[0]) is list:
             opts.titles = [" | ".join(str(i) for i in x) for x in opts.titles]
+
+    if type(imgs) is torch.Tensor:
+        if imgs.device != "cpu":
+            imgs[:opts.rows*opts.cols, ...] = imgs[:opts.rows*opts.cols, ...].detach().cpu()
 
     for i, ax in enumerate(axs):
         ax.axis("off")

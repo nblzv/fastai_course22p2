@@ -20,7 +20,7 @@ def chunkify(container, chunk_size):
     
     return chunks
 
-class SIO: # SamplerIterOpts
+class SIOPTS: # SamplerIterOpts
     def __init__(self, batch_size=64, shuffle=False, drop_last=False):
         self.batch_size = batch_size
         self.shuffle = shuffle
@@ -30,12 +30,15 @@ class SIO: # SamplerIterOpts
         return f"SIO(batch_size={self.batch_size}, shuffle={self.shuffle}, drop_last={self.drop_last})"
 
 class SamplerIter:
-    def __init__(self, indices, sampler_iter_opts: SIO):
+    def __init__(self, indices, sampler_iter_opts: SIOPTS):
         self.indices = indices
         self.opts = sampler_iter_opts
 
         full_chunks, leftover = chunkify_calc_sizes(self.indices, self.opts.batch_size)
         self.num_batches = full_chunks + (not self.opts.drop_last)*bool(leftover)
+
+    def __repr__(self):
+        return f"SamplerIter(num_batches={self.num_batches}, opts={self.opts})"
 
     def __iter__(self):
         if self.opts.shuffle: random.shuffle(self.indices)
@@ -55,7 +58,7 @@ class Sampler:
         self.num_items = num_items
 
     def iter(self, sampler_iter_opts=None):
-        sampler_iter_opts = sampler_iter_opts or SIO()
+        sampler_iter_opts = sampler_iter_opts or SIOPTS()
         indices = list(range(self.num_items))
         return SamplerIter(indices, sampler_iter_opts)
 

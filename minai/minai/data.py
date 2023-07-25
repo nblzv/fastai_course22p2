@@ -400,8 +400,8 @@ class DataLoader:
         return cls(ds, collator, collator_iter_opts)
 
     @classmethod
-    def simple(cls, simple_ds: minds.SimpleDataset, sampler_iter_opts: mins.SIO = None, collator_opts: COPTS = None, collator_iter_opts: COIOPTS = None):
-        sampler_iter_opts = sampler_iter_opts or mins.SIO()
+    def simple(cls, simple_ds: minds.SimpleDataset, sampler_iter_opts: mins.SIOPTS = None, collator_opts: COPTS = None, collator_iter_opts: COIOPTS = None):
+        sampler_iter_opts = sampler_iter_opts or mins.SIOPTS()
         collator_opts = collator_opts or COPTS()
         collator_iter_opts = collator_iter_opts or COIOPTS()
 
@@ -411,9 +411,9 @@ class DataLoader:
         return cls.solo(simple_ds, collator_opts, collator_iter_opts)
 
     @classmethod
-    def hf(cls, hf_ds: hfds.Dataset, sampler_iter_opts: mins.SIO = None, collator_opts: COPTS = None, collator_iter_opts: COIOPTS = None):
+    def hf(cls, hf_ds: hfds.Dataset, sampler_iter_opts: mins.SIOPTS = None, collator_opts: COPTS = None, collator_iter_opts: COIOPTS = None):
         assert type(hf_ds) is hfds.Dataset, f"Dataset expected, not {type(hf_ds).__name__}"
-        sampler_iter_opts = sampler_iter_opts or mins.SIO()
+        sampler_iter_opts = sampler_iter_opts or mins.SIOPTS()
         collator_opts = collator_opts or COPTS()
         collator_iter_opts = collator_iter_opts or COIOPTS()
         
@@ -423,9 +423,9 @@ class DataLoader:
         return cls.solo(hf_ds, collator_opts, collator_iter_opts)
     
     @classmethod
-    def hf_dsd(cls, hf_ds: hfds.Dataset, collator: Collator, sampler_iter_opts: mins.SIO = None, collator_iter_opts: COIOPTS = None):
+    def hf_dsd(cls, hf_ds: hfds.Dataset, collator: Collator, sampler_iter_opts: mins.SIOPTS = None, collator_iter_opts: COIOPTS = None):
         assert type(hf_ds) is hfds.Dataset, f"Dataset expected, not {type(hf_ds).__name__}"
-        sampler_iter_opts = sampler_iter_opts or mins.SIO()
+        sampler_iter_opts = sampler_iter_opts or mins.SIOPTS()
         collator_iter_opts = collator_iter_opts or COIOPTS()
         
         collator_iter_opts.sampler_iter = mins.Sampler(len(hf_ds)).iter(sampler_iter_opts)
@@ -494,17 +494,17 @@ class DataLoaderDict(dict):
     @classmethod
     def hf(cls, dsd: hfds.DatasetDict, 
            collator_opts: COPTS = None, 
-           sampler_iter_opts: dict[str, mins.SIO] = {}, 
+           sampler_iter_opts: dict[str, mins.SIOPTS] = {}, 
            collator_iter_opts: dict[str, COIOPTS] = {}):
         
         collator_opts = collator_opts or COPTS()
         collator = Collator(collator_opts)
 
-        if type(sampler_iter_opts) is mins.SIO:
+        if type(sampler_iter_opts) is mins.SIOPTS:
             sio_default = sampler_iter_opts
             sampler_iter_opts = {}
         else:
-            sio_default = mins.SIO()
+            sio_default = mins.SIOPTS()
 
         if type(collator_iter_opts) is COIOPTS:
             coiopts_default = collator_iter_opts
